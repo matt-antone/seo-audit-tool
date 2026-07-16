@@ -1,0 +1,16 @@
+{
+  "name": "@matt-antone/seo-audit",
+  "version": "1.0.0",
+  "description": "Combined technical SEO + AI-readiness (AEO) site auditor with rendered-DOM verification. No Docker required.",
+  "type": "module",
+  "bin": { "seo-audit": "bin/seo-audit.js" },
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node test/test.js"
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
