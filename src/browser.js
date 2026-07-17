@@ -93,6 +93,12 @@ export class BrowserPool {
   }
 
   async ensure() {
+    // Memoized: concurrent callers share one launch, else each would spawn its own Chromium.
+    this.launching ??= this.#launch();
+    return this.launching;
+  }
+
+  async #launch() {
     if (this.browser) return true;
     if (this.available === false) return false;
     const mod = await playwright();
@@ -159,5 +165,6 @@ export class BrowserPool {
   async close() {
     await this.browser?.close().catch(() => {});
     this.browser = null;
+    this.launching = null;
   }
 }

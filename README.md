@@ -42,6 +42,86 @@ Run `seo-audit --help` for all flags.
 - **HTML** (`--html`): self-contained client report (light/dark, print-friendly).
 - **PDF** (`--pdf`): the same report printed via Chromium.
 
+## Hosted API (Vercel)
+
+The same engine is exposed as a JSON endpoint so a branded front-end can run audits and
+lay out the results itself. It's a **separate tool** from the CLI — the CLI is unchanged.
+
+```
+GET  /api/audit?url=example.com[&maxPages=20&checks=aeo]
+POST /api/audit          { "url": "example.com", "maxPages": 20 }
+```
+
+Response: `{ ok: true, maxPages: 30, result: { …same shape as the CLI JSON… } }`.
+CORS is open (`*`) so the front-end can fetch it directly. Errors return
+`{ ok: false, error }` with a 400 (bad input) or 500.
+
+Differences from the CLI, by design for a public endpoint:
+
+- **Hard cap of 30 pages** per request — `maxPages` is clamped to `[1, 30]`, no `--full`.
+- **No JS rendering.** Parsing uses `linkedom` (pure JS, no Chromium), so it deploys to
+  serverless with no browser binary and stays inside the function time budget. Findings are
+  raw-HTML only — equivalent to the CLI's `--no-render` mode; `content-requires-js`
+  SPA detection is CLI-only.
+
+Deploy:
+
+```bash
+vercel            # preview
+vercel --prod     # production
+```
+
+`vercel.json` sets the function's `maxDuration` to 300s. No env vars required.
+Live example: `https://seo-audit-tool-murex.vercel.app/api/audit?url=example.com`
+
+### Use it from a Next.js app
+
+Two ways, depending on whether you want a second deploy.
+
+**A. Just call the hosted endpoint** (zero extra work — it already runs). CORS is open,
+so fetch it from a server component, route handler, or the client:
+
+```js
+const { result } = await fetch(
+  `https://seo-audit-tool-murex.vercel.app/api/audit?url=${encodeURIComponent(site)}`,
+  { cache: 'no-store' }
+).then(r => r.json());
+```
+
+**B. Embed the engine — one deploy, no separate service.** The engine is plain ESM +
+`linkedom` and the API path never loads Playwright (it's a lazy `import()` only reached by
+the CLI's real browser pool), so it drops into an App Router route handler:
+
+```bash
+npm i github:matt-antone/seo-audit-tool
+```
+
+```js
+// app/api/audit/route.js
+import { runApiAudit, MAX_PAGES } from '@matt-antone/seo-audit/src/audit-api.js';
+
+export const runtime = 'nodejs';   // linkedom + Buffer need Node, not edge
+export const maxDuration = 300;    // 30-page crawls can run long
+
+export async function GET(req) {
+  const { searchParams } = new URL(req.url);
+  try {
+    const result = await runApiAudit({
+      url: searchParams.get('url'),
+      maxPages: searchParams.get('maxPages'),
+      checksFilter: searchParams.get('checks'),
+    });
+    return Response.json({ ok: true, maxPages: MAX_PAGES, result });
+  } catch (err) {
+    const bad = /missing required|invalid url/.test(err.message);
+    return Response.json({ ok: false, error: err.message }, { status: bad ? 400 : 500 });
+  }
+}
+```
+
+Same JSON shape, same-origin (no CORS), one Vercel deploy. `playwright` still installs as a
+dependency but never runs in this path.
+
 ## Compare mode
 
 `--compare <url>` audits both URLs and classifies every finding as **fixed / unchanged /

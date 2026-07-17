@@ -16,13 +16,14 @@ Options:
   --compare <url>       Audit both URLs and diff findings (any URL vs any URL)
   --json <file>         Write JSON results (default: seo-audit-<host>.json)
   --html <file>         Write HTML report
-  --pdf <file>          Write PDF report (requires Chromium via Playwright)
+  --pdf [file]          Write PDF report (default: seo-audit-<host>.pdf; requires Chromium via Playwright)
   --max-pages <n>       Pages to crawl per site (default 30)
+  --full                Crawl all discoverable pages (no page limit)
   --max-renders <n>     Max pages verified in a rendered browser (default 30)
   --concurrency <n>     Parallel fetches (default 4)
   --checks <seo|aeo|all>  Restrict finding categories (default all)
   --no-render           Skip browser rendering entirely (fast, may false-positive on SPAs)
-  --render-all          Render every page, not just suspicious/failing ones
+  --render-all          Render every page, not just suspicious/failing ones (lifts --max-renders cap)
   --config <file>       JSON config: { maxPages, ignoreChecks:[], pathMap:{}, brand }
   --quiet               No progress output
   -h, --help            Show this help
@@ -38,8 +39,9 @@ function parseArgs(argv) {
       case '--compare': opts.compare = next(); break;
       case '--json': opts.json = next(); break;
       case '--html': opts.html = next(); break;
-      case '--pdf': opts.pdf = next(); break;
+      case '--pdf': opts.pdf = (argv[i + 1] && !argv[i + 1].startsWith('-')) ? next() : true; break;
       case '--max-pages': opts.maxPages = +next(); break;
+      case '--full': opts.full = true; break;
       case '--max-renders': opts.maxRenders = +next(); break;
       case '--concurrency': opts.concurrency = +next(); break;
       case '--checks': opts.checksFilter = next(); break;
@@ -65,8 +67,8 @@ export async function main(argv) {
   if (opts.config) config = JSON.parse(await readFile(opts.config, 'utf8'));
 
   const auditOpts = {
-    maxPages: opts.maxPages ?? config.maxPages ?? 30,
-    maxRenders: opts.maxRenders ?? config.maxRenders ?? 30,
+    maxPages: opts.full ? Infinity : (opts.maxPages ?? config.maxPages ?? 30),
+    maxRenders: opts.maxRenders ?? config.maxRenders ?? (opts.renderAll ? Infinity : 30),
     concurrency: opts.concurrency ?? config.concurrency ?? 4,
     render: opts.render ?? true,
     renderAll: opts.renderAll ?? false,
@@ -105,8 +107,9 @@ export async function main(argv) {
   }
   if (opts.html) { await writeFile(opts.html, html); console.error(`wrote ${opts.html}`); }
   if (opts.pdf) {
+    const pdfPath = opts.pdf === true ? `seo-audit-${host}.pdf` : opts.pdf;
     const pool = new BrowserPool({});
-    try { await pool.pdf(html, opts.pdf); console.error(`wrote ${opts.pdf}`); }
+    try { await pool.pdf(html, pdfPath); console.error(`wrote ${pdfPath}`); }
     finally { await pool.close(); }
   }
 

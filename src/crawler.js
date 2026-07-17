@@ -26,7 +26,9 @@ export async function audit(baseUrl, opts = {}) {
   const origin = base.origin;
   const host = base.host;
   const fetcher = makeFetcher(opts);
-  const pool = new BrowserPool({ userAgent: fetcher.userAgent });
+  // Parser is pluggable: the CLI uses BrowserPool (Chromium), the hosted API
+  // passes a Chromium-free linkedom parser. Same interface either way.
+  const pool = opts.pool ?? new BrowserPool({ userAgent: fetcher.userAgent });
   const findings = [];
   const site = { base: origin, host };
 
@@ -70,7 +72,13 @@ export async function audit(baseUrl, opts = {}) {
 
   // ---------- sitemap ----------
   const smUrls = robots.sitemaps.length ? robots.sitemaps : [origin + '/sitemap.xml'];
-  const { pages: sitemapPages, sitemaps } = await loadSitemaps(fetcher, smUrls);
+  let { pages: sitemapPages, sitemaps } = await loadSitemaps(fetcher, smUrls);
+  if (!sitemapPages.length && !smUrls.includes(origin + '/sitemap.xml')) {
+    // robots.txt declared sitemap(s) that yielded nothing — try the conventional location
+    const fallback = await loadSitemaps(fetcher, [origin + '/sitemap.xml']);
+    sitemapPages = fallback.pages;
+    sitemaps = sitemaps.concat(fallback.sitemaps);
+  }
   site.sitemaps = sitemaps;
   site.sitemapUrlCount = sitemapPages.length;
   const smValid = sitemaps.some(s => s.valid);
@@ -88,6 +96,7 @@ export async function audit(baseUrl, opts = {}) {
   const seen = new Set();
   const pages = [];
   let renders = 0;
+  let claimed = 0; // slots reserved by workers; enforces maxPages exactly under concurrency
 
   enqueueBase(); // homepage first, then sitemap order
   function enqueueBase() {
@@ -95,15 +104,20 @@ export async function audit(baseUrl, opts = {}) {
     for (const p of sitemapPages) enqueue(p);
   }
 
-  log(`crawling up to ${maxPages} pages (${sitemapPages.length} sitemap URLs discovered)…`);
+  log(`crawling ${maxPages === Infinity ? 'all' : `up to ${maxPages}`} pages (${sitemapPages.length} sitemap URLs discovered)…`);
 
   async function worker() {
-    while (queue.length && pages.length < maxPages) {
+    while (queue.length && claimed < maxPages) {
       const url = queue.shift();
       if (!url || seen.has(url)) continue;
       seen.add(url);
       const path = new URL(url).pathname;
       if (robotsTxt && !isAllowed(robots, '*', path)) continue;
+
+      // Reserve a slot synchronously (no await between check and increment) so
+      // concurrent workers can never push past maxPages.
+      if (claimed >= maxPages) break;
+      claimed++;
 
       const res = await fetcher.get(url);
       const record = {
