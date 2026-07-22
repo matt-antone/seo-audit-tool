@@ -14,9 +14,9 @@ Usage:
 
 Options:
   --compare <url>       Audit both URLs and diff findings (any URL vs any URL)
-  --json <file>         Write JSON results (default: seo-audit-<host>.json)
+  --json <file>         Write JSON results (default: seo-audit-<host>-<date>.json)
   --html <file>         Write HTML report
-  --pdf [file]          Write PDF report (default: seo-audit-<host>.pdf; requires Chromium via Playwright)
+  --pdf [file]          Write PDF report (default: seo-audit-<host>-<date>.pdf; requires Chromium via Playwright)
   --max-pages <n>       Pages to crawl per site (default 30)
   --full                Crawl all discoverable pages (no page limit)
   --max-renders <n>     Max pages verified in a rendered browser (default 30)
@@ -59,6 +59,15 @@ function parseArgs(argv) {
 
 const normalizeUrl = (u) => /^https?:\/\//i.test(u) ? u : 'https://' + u;
 
+// Filename stamp: YYYY-MM-DD-HHMMSS in LOCAL time, so files sort chronologically
+// and read against the user's own clock. (result.auditedAt stays ISO/UTC.)
+// Seconds are included because re-audits of the same host often happen minutes
+// apart during a fix-and-recheck cycle.
+function timestamp(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
 export async function main(argv) {
   const opts = parseArgs(argv);
   if (opts.help || opts.urls.length === 0) { console.log(HELP); return; }
@@ -96,7 +105,10 @@ export async function main(argv) {
 
   // outputs
   const host = new URL(baseUrl).host.replace(/[^a-z0-9.-]/gi, '_');
-  const jsonPath = opts.json ?? `seo-audit-${host}.json`;
+  // One stamp per run, shared by every default filename, so a run's JSON and PDF
+  // pair up — and so re-auditing the same host never overwrites an earlier run.
+  const stamp = timestamp();
+  const jsonPath = opts.json ?? `seo-audit-${host}-${stamp}.json`;
   const output = compareData ? { ...result, compare: { target: compareResult, diff: compareData } } : result;
   await writeFile(jsonPath, JSON.stringify(output, null, 2));
   console.error(`wrote ${jsonPath}`);
@@ -107,7 +119,7 @@ export async function main(argv) {
   }
   if (opts.html) { await writeFile(opts.html, html); console.error(`wrote ${opts.html}`); }
   if (opts.pdf) {
-    const pdfPath = opts.pdf === true ? `seo-audit-${host}.pdf` : opts.pdf;
+    const pdfPath = opts.pdf === true ? `seo-audit-${host}-${stamp}.pdf` : opts.pdf;
     const pool = new BrowserPool({});
     try { await pool.pdf(html, pdfPath); console.error(`wrote ${pdfPath}`); }
     finally { await pool.close(); }

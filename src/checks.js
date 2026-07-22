@@ -8,6 +8,7 @@ export const CHECKS = {
   'ai-bot-blocked':            { severity: 'high',    category: 'aeo', title: 'AI crawler blocked in robots.txt' },
   'sitemap-missing':           { severity: 'medium',  category: 'seo', title: 'No usable XML sitemap found' },
   'sitemap-invalid':           { severity: 'medium',  category: 'seo', title: 'Sitemap exists but is not valid XML' },
+  'sitemap-no-lastmod':        { severity: 'low',     category: 'seo', title: 'Sitemap entries have no lastmod dates' },
   'llms-txt-missing':          { severity: 'high',    category: 'aeo', title: 'No llms.txt' },
   'soft-404':                  { severity: 'medium',  category: 'seo', title: 'Unknown URLs return HTTP 200 (soft 404)' },
   'http-no-redirect':          { severity: 'high',    category: 'seo', title: 'HTTP does not redirect to HTTPS' },
@@ -40,6 +41,8 @@ export const CHECKS = {
   'article-no-date':           { severity: 'high',    category: 'aeo', title: 'Article/BlogPosting without a publish date' },
   'article-no-visible-byline': { severity: 'medium',  category: 'aeo', title: 'No visible author or date on article page' },
   'content-requires-js':       { severity: 'high',    category: 'aeo', title: 'Main content only exists after JavaScript runs' },
+  'article-no-date-modified':  { severity: 'low',     category: 'aeo', title: 'Article/BlogPosting without a dateModified (freshness signal)' },
+  'hreflang-no-x-default':     { severity: 'low',     category: 'seo', title: 'hreflang alternates missing x-default' },
 
   // ---- cross-page / site-wide ----
   'duplicate-titles':          { severity: 'medium',  category: 'seo', title: 'Duplicate titles across pages' },
@@ -47,6 +50,8 @@ export const CHECKS = {
   'shared-og-image':           { severity: 'low',     category: 'seo', title: 'Most pages share one og:image' },
   'no-organization-schema':    { severity: 'high',    category: 'aeo', title: 'No Organization schema anywhere' },
   'no-faq-schema':             { severity: 'low',     category: 'aeo', title: 'No FAQ content/schema anywhere' },
+  'no-breadcrumb-schema':      { severity: 'low',     category: 'seo', title: 'No BreadcrumbList schema anywhere' },
+  'no-contact-signals':        { severity: 'low',     category: 'aeo', title: 'No contact page or contact links found (trust signal)' },
 };
 
 const SEVERITY_WEIGHT = { critical: 18, high: 9, medium: 4, low: 1.5 };
@@ -122,9 +127,17 @@ export function runPageChecks(model, ctx) {
   if (articles.length) {
     if (!articles.some(a => a.author)) add('article-no-author', 'BlogPosting/Article schema has no author.');
     if (!articles.some(a => a.datePublished)) add('article-no-date', 'BlogPosting/Article schema has no datePublished.');
+    else if (!articles.some(a => a.dateModified)) {
+      add('article-no-date-modified', 'Schema has datePublished but no dateModified — AI systems favor demonstrably fresh content.');
+    }
     if (!model.visibleAuthor && !model.visibleDate && model.timeEls === 0) {
       add('article-no-visible-byline', 'No visible byline or date in the article body.');
     }
+  }
+
+  // international
+  if (model.hreflangs?.length && !model.hreflangs.some(h => /^x-default$/i.test(h))) {
+    add('hreflang-no-x-default', `${model.hreflangs.length} hreflang alternate(s) but no x-default fallback.`, model.hreflangs.slice(0, 10).join(', '));
   }
 
   if (ctx.redirected) add('redirect-in-crawl', `Reached via redirect: ${ctx.redirectChain?.join(' → ') || ctx.url}.`);
@@ -137,6 +150,7 @@ export function runPageChecks(model, ctx) {
 const RENDER_SENSITIVE = new Set([
   'title-missing', 'meta-description-missing', 'h1-missing', 'canonical-missing',
   'jsonld-missing', 'article-no-author', 'article-no-date', 'article-no-visible-byline',
+  'article-no-date-modified', 'hreflang-no-x-default',
   'og-missing', 'twitter-card-missing', 'thin-content', 'img-alt-missing',
   'lang-missing', 'viewport-missing', 'h1-multiple', 'heading-skip', 'jsonld-invalid',
   'title-duplicate-brand', 'noindex',
@@ -153,7 +167,7 @@ export function needsRender(rawFindings, model, rawHtml) {
 export function runCrossChecks(pages /* [{url, model}] */) {
   const f = [];
   const byTitle = new Map(), byDesc = new Map(), byOg = new Map();
-  let anyOrg = false, anyFaq = false;
+  let anyOrg = false, anyFaq = false, anyBreadcrumb = false, anyContact = false;
 
   for (const p of pages) {
     const m = p.model;
@@ -163,6 +177,8 @@ export function runCrossChecks(pages /* [{url, model}] */) {
     if (m.og?.image) push(byOg, m.og.image, p.url);
     if (m.jsonld.some(x => x.type.some(t => /Organization|LocalBusiness|InsuranceAgency/i.test(t)))) anyOrg = true;
     if (m.jsonld.some(x => x.type.some(t => /FAQPage/i.test(t)))) anyFaq = true;
+    if (m.jsonld.some(x => x.type.some(t => /BreadcrumbList/i.test(t)))) anyBreadcrumb = true;
+    if (/^\/(contact|contact-us|kontakt)(\/|$)/i.test(p.path) || m.anchors.some(a => /^(mailto:|tel:)/i.test(a))) anyContact = true;
   }
 
   for (const [t, urls] of byTitle) if (urls.length > 1) {
@@ -179,6 +195,8 @@ export function runCrossChecks(pages /* [{url, model}] */) {
   }
   if (htmlPages > 0 && !anyOrg) f.push(makeFinding('no-organization-schema', { message: 'No Organization/LocalBusiness schema found on any crawled page.' }));
   if (htmlPages >= 4 && !anyFaq) f.push(makeFinding('no-faq-schema', { message: 'No FAQPage schema found on any crawled page.' }));
+  if (htmlPages >= 4 && !anyBreadcrumb) f.push(makeFinding('no-breadcrumb-schema', { message: 'No BreadcrumbList schema on any crawled page — breadcrumbs help engines and AI understand site structure.' }));
+  if (htmlPages >= 4 && !anyContact) f.push(makeFinding('no-contact-signals', { message: 'No contact page, mailto: or tel: link found on any crawled page — a trust (EEAT) signal engines look for.' }));
   return f;
 }
 

@@ -25,6 +25,7 @@ export async function loadSitemaps(fetcher, urls, { maxDepth = 2, maxUrls = 5000
       for (const child of locs) await load(child, depth + 1);
     } else {
       entry.urlCount = locs.length;
+      entry.lastmodCount = (text.match(/<lastmod>/gi) || []).length;
       for (const p of locs) { if (pages.length < maxUrls) pages.push(p); }
     }
   }

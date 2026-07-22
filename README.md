@@ -28,10 +28,24 @@ raw-HTML only and the report is watermarked accordingly. PDF export requires Chr
 ```bash
 seo-audit https://www.example.com
 seo-audit example.com --pdf audit.pdf --max-pages 50
+seo-audit example.com --pdf                   # defaults to seo-audit-<host>-<date>.pdf
+seo-audit example.com --full --render-all     # whole site, every page rendered
 seo-audit https://prod.com --compare https://staging.dev --pdf diff.pdf
 seo-audit example.com --checks aeo            # AI-readiness findings only
 seo-audit example.com --config clients/example.json
 ```
+
+Crawl scope:
+
+| Flag | Effect |
+|---|---|
+| `--max-pages <n>` | Crawl budget (default 30). Enforced exactly, even under concurrency. |
+| `--full` | No page limit — crawl every page reachable via sitemap + links. |
+| `--max-renders <n>` | Cap on pages escalated to a real browser render (default 30). |
+| `--render-all` | Render every page, not just suspicious ones. Lifts the render cap unless `--max-renders` is set explicitly. |
+| `--no-render` | Skip the browser entirely — raw HTML only, much faster. |
+
+`--full --render-all` on a large site is slow (a render per page); expect minutes, not seconds.
 
 Run `seo-audit --help` for all flags.
 
@@ -143,21 +157,24 @@ paths differ between the two sites.
 `ignoreChecks` is for known, accepted exceptions (e.g. a client that deliberately has no
 contact page) so they stop appearing in re-audits.
 
-## What it checks (~40 checks)
+## What it checks (~45 checks)
 
 **Site-level:** robots.txt presence/sanity, per-AI-crawler access (GPTBot, ClaudeBot,
-PerplexityBot, Google-Extended, CCBot, and 7 more), sitemap validity (index + gzip aware),
-llms.txt, soft-404 behavior, HTTP→HTTPS.
+PerplexityBot, Google-Extended, CCBot, and 7 more), sitemap validity (index + gzip aware)
+and `lastmod` freshness, llms.txt, soft-404 behavior, HTTP→HTTPS.
 
 **Page-level (SEO):** title missing/doubled/length, meta description missing/length,
-H1 count, heading order, canonical, noindex, image alt text, Open Graph/Twitter cards,
-lang/viewport, mixed content, thin content, redirects, broken internal links.
+H1 count, heading order, canonical, hreflang x-default, noindex, image alt text,
+Open Graph/Twitter cards, lang/viewport, mixed content, thin content, redirects,
+broken internal links.
 
-**Page-level (AEO):** JSON-LD presence/validity, Article/BlogPosting author + date (schema
-AND visible byline), content that only exists after JavaScript runs.
+**Page-level (AEO):** JSON-LD presence/validity, Article/BlogPosting author + dates
+(datePublished AND dateModified in schema, plus visible byline), content that only
+exists after JavaScript runs.
 
 **Cross-page:** duplicate titles/descriptions, one og:image shared site-wide,
-no Organization schema anywhere, no FAQ schema anywhere.
+no Organization schema anywhere, no FAQ schema anywhere, no BreadcrumbList anywhere,
+no contact page or contact links anywhere (EEAT trust signal).
 
 Noindexed pages report only their noindex status — no snippet nagging on pages that
 aren't meant to be indexed.
@@ -177,7 +194,10 @@ npm test   # spins up two local fixture sites (broken + fixed), 41 assertions,
 
 ## Notes & limits (v1)
 
-- Respects robots.txt for its own crawl (wildcard group).
-- Default crawl budget: 30 pages, 30 renders, 4 concurrent fetches — tune per site.
-- Not covered yet: page-speed lab metrics, backlink data, hreflang validation, image
-  weight, per-page Lighthouse. By design: no keyword tracking, ever.
+- Respects robots.txt for its own crawl (wildcard group). If robots.txt declares a sitemap
+  that yields nothing, the conventional `/sitemap.xml` is tried as a fallback.
+- Default crawl budget: 30 pages, 30 renders, 4 concurrent fetches — tune per site, or
+  `--full` for no page limit. The hosted API is always capped at 30.
+- Not covered yet: page-speed lab metrics, backlink data, full hreflang reciprocity
+  validation (x-default presence is checked), image weight, per-page Lighthouse.
+  By design: no keyword tracking, ever.

@@ -68,6 +68,7 @@ function extract(html, baseUrl) {
     metaDescription: meta('description'),
     metaRobots: meta('robots'),
     canonical: abs(canonicalEl?.getAttribute('href')),
+    hreflangs: [...d.querySelectorAll('link[rel="alternate"][hreflang]')].map(l => l.getAttribute('hreflang')).filter(Boolean),
     lang: d.documentElement.getAttribute('lang'),
     viewport: !!q('meta[name="viewport" i]'),
     og: { title: prop('og:title'), description: prop('og:description'), image: prop('og:image'), url: prop('og:url') },

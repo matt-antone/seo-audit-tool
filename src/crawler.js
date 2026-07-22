@@ -85,6 +85,8 @@ export async function audit(baseUrl, opts = {}) {
   if (!smValid) {
     const anyFetched = sitemaps.some(s => s.status === 200);
     findings.push(makeFinding(anyFetched ? 'sitemap-invalid' : 'sitemap-missing', { message: anyFetched ? 'Sitemap responded but is not parseable XML.' : `No sitemap at ${smUrls.join(', ')}.`, verifiedBy: 'http' }));
+  } else if (sitemapPages.length && !sitemaps.some(s => (s.lastmodCount || 0) > 0)) {
+    findings.push(makeFinding('sitemap-no-lastmod', { message: `Sitemap lists ${sitemapPages.length} URLs but none carry <lastmod> — a freshness signal engines and AI use.`, verifiedBy: 'http' }));
   }
 
   // ---------- crawl ----------
